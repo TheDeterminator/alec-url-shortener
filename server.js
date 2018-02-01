@@ -1,13 +1,12 @@
-// server.js
+var fs = require('fs');
+var express = require('express');
+var mongodb = require('mongodb');
+var shortid = require('shortid');
+shortid.characters('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ$&');
+var validUrl = require('valid-url');
 
-const fs = require('fs')
-const express = require('express');
-const app = express()
-const mongodb = require('mongodb');
-const shortid = require('shortid');
-shortid.characters('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ$&')
-const validUrl = require('valid-url');
-const MongoClient = mongodb.MongoClient;
+var app = express();
+var MongoClient = mongodb.MongoClient;
 
 if (!process.env.DISABLE_XORIGIN) {
   app.use(function(req, res, next) {
@@ -22,11 +21,7 @@ if (!process.env.DISABLE_XORIGIN) {
   });
 }
 
-app.use(express.static('public'));
-
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/views/index.html');
-});
+app.use('/public', express.static(process.cwd() + '/public'));
 
 app.route('/_api/package.json')
   .get(function(req, res, next) {
@@ -36,78 +31,83 @@ app.route('/_api/package.json')
       res.type('txt').send(data.toString());
     });
   });
+  
+app.route('/')
+    .get(function(req, res) {
+		  res.sendFile(process.cwd() + '/views/index.html');
+    })
 
-app.route('/new/:url(*)').get( (req, res, next) => {
+app.route('/new/:url(*)')
+    .get( (req,res, next) => {
   //connect to database
   MongoClient.connect(process.env.MONGO_URL, (err, db) => {
-    if (err) {
-      console.log('Unable to connect to server', err)
-    } else {
-      let collection = db.collection('links');
-      let url = req.params.url;
-      let host = req.get('host') + '/';
-      
-      //Generates a....new URL?
-      let generateLink = (db, callback) => {
-        if (validUrl.isUri(url)) {
-          //returns a document in the links collection whre url field contains a passed url parameter and returns one entry from the short field and no entries from the _id field in other words uses the given url to return a shortened one
-          
-         collection.findOne({url: url}, {short: 1, _id: 0}, (err, doc) => {
-           //if document contains the shortened url it is set to the short_url propoerty
-           if (doc != null) {
-             res.json({
-             originalUrl: url,
-               short_url: host + doc.short
-             });
-           } else {
-             //generate a short code if a short URL not present in the database
-             let shortCode = shortid.generate();
-             let newUrl = {url: url, short:shortCode};
-             collection.insert(newUrl);
-             res.json({
-               original_url: url,
-               short_url: host + shortCode
-             });
-           }
-         }); 
+        if (err) {
+          console.log("Unable to connect to server", err);
         } else {
-          console.log('Not a URI');
-          res.json({
-            error: 'Invalid url'
+          //console.log("Connected to server");
+          let collection = db.collection('links');
+          let url = req.params.url;
+          let host = req.get('host') + "/"
+          
+          //function to generate short link 
+          let generateLink = function(db, callback) {
+            //check if url is valid
+            if (validUrl.isUri(url)){
+              collection.findOne({"url": url}, {"short": 1, "_id": 0}, (err, doc) =>{
+                if(doc != null){
+                  res.json({
+                  "original_url": url, 
+                  "short_url":host + doc.short
+                });
+                }
+                else{
+                   //generate a short code
+                    let shortCode = shortid.generate();
+                    let newUrl = { url: url, short: shortCode };
+                    collection.insert([newUrl]);
+                      res.json({
+                        "original_url":url, 
+                        "short_url":host + shortCode
+                      });
+                }
+              });
+            } 
+            else {
+                console.log('Not a URI');
+                res.json({
+                  "error": "Invalid url"
+                })
+            }
+          };
+          
+          generateLink(db, function(){
+            db.close();
           });
         }
-          
-      };
-      
-      //Run the generateLink function we created
-      db.generateLink(db, () => {
-        db.close();
-      });             
-    } 
-  })
+  }); 
 });
 
-//given short url redirect to original URL
-app.route('/:short').get( (req, res, next) => {
-  MongoClient.connect(process.env.MONGO_URL, (err, db) => {
+//given short url redirect to original url
+app.route('/:short')
+    .get( (req,res, next) => {
+  MongoClient.connect(process.env.MONGO_URL, (err,db) => {
     if (err) {
-      console.log('Unable to connect to server', err)
-    } else {
-      let collection = db.collection('links');
-      let short = req.params.short;
-      
-      //for a given shortened url returns the original url and redirects the browser to that location
-      collection.findOne({short:short}, {url: 1, _id: 0}, (err, doc) => {
-        if (doc != null) {
-          res.redirect(doc.url);
+          console.log("Unable to connect to server", err);
         } else {
-          res.json({error: 'Shortlink not found in the database'});
+          let collection = db.collection('links');
+          let short = req.params.short;
+          
+          //search for original url in db and redirect the browser
+          collection.findOne({"short": short}, {"url": 1, "_id": 0}, (err, doc) => {
+            if (doc != null) {
+              res.redirect(doc.url);
+            } else {
+              res.json({ error: "Shortlink not found in the database." });
+            };
+          });
         }
-      });
-    }
-    
     db.close();
-  })
+  });
 });
 
 // Respond not found to all the wrong routes
@@ -123,8 +123,8 @@ app.use(function(err, req, res, next) {
       .type('txt')
       .send(err.message || 'SERVER ERROR');
   }  
-})            
-
-app.listen(process.env.PORT, () => {
-  console.log('Your app is listening on port ' + process.env.PORT);
 })
+
+app.listen(process.env.PORT, function () {
+  console.log('Node.js listening ...');
+});
