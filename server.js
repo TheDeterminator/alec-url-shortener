@@ -1,5 +1,7 @@
 // server.js
 
+'use strict';
+
 const fs = require('fs')
 const express = require('express');
 const app = express()
@@ -8,6 +10,7 @@ const shortid = require('shortid');
 shortid.characters('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ$&')
 const validUrl = require('valid-url');
 const MongoClient = mongodb.MongoClient;
+
 
 if (!process.env.DISABLE_XORIGIN) {
   app.use(function(req, res, next) {
@@ -39,16 +42,17 @@ app.route('/_api/package.json')
 
 app.route('/new/:url(*)').get( (req, res, next) => {
   //connect to database
-  MongoClient.connect(process.env.MONGO_URL, (err, db) => {
+  MongoClient.connect(process.env.MONGO_URL, (err, database) => {
+    const shortUrl = database.db('short-url');
     if (err) {
       console.log('Unable to connect to server', err)
     } else {
-      let collection = db.collection('links');
+      let collection = shortUrl.collection('links');
       let url = req.params.url;
       let host = req.get('host') + '/';
       
       //Generates a....new URL?
-      let generateLink = (db, callback) => {
+      let generateLink = function(db, callback) {
         if (validUrl.isUri(url)) {
           //returns a document in the links collection whre url field contains a passed url parameter and returns one entry from the short field and no entries from the _id field in other words uses the given url to return a shortened one
           
@@ -80,8 +84,8 @@ app.route('/new/:url(*)').get( (req, res, next) => {
       };
       
       //Run the generateLink function we created
-      db.generateLink(db, () => {
-        db.close();
+      generateLink(database, function() {
+        database.close();
       });             
     } 
   })
@@ -89,12 +93,13 @@ app.route('/new/:url(*)').get( (req, res, next) => {
 
 //given short url redirect to original URL
 app.route('/:short').get( (req, res, next) => {
-  MongoClient.connect(process.env.MONGO_URL, (err, db) => {
+  MongoClient.connect(process.env.MONGO_URL, (err, database) => {
+    const shortUrl = database.db('short-url');
     if (err) {
-      console.log('Unable to connect to server', err)
+      console.log('Unable to connect to server', err);
     } else {
-      let collection = db.collection('links');
-      let short = req.params.short;
+        let collection = shortUrl.collection('links');
+        let short = req.params.short;
       
       //for a given shortened url returns the original url and redirects the browser to that location
       collection.findOne({short:short}, {url: 1, _id: 0}, (err, doc) => {
@@ -106,8 +111,8 @@ app.route('/:short').get( (req, res, next) => {
       });
     }
     
-    db.close();
-  })
+    database.close();
+  });
 });
 
 // Respond not found to all the wrong routes
